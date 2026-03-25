@@ -753,9 +753,8 @@
 
         const nodeRadius = 26;
         const count = nodeNames.length;
-        const circleRadius = Math.max(120, count * 22);
-        const width = circleRadius * 2 + 160;
-        const height = circleRadius * 2 + 160;
+        const width = Math.max(920, Math.ceil(Math.sqrt(count)) * 240);
+        const height = Math.max(700, Math.ceil(Math.sqrt(count)) * 200);
         const centerX = width / 2;
         const centerY = height / 2;
 
@@ -778,15 +777,6 @@
         defs.appendChild(marker);
         svg.appendChild(defs);
 
-        const positions = {};
-        nodeNames.forEach((name, index) => {
-          const angle = (2 * Math.PI * index) / count - Math.PI / 2;
-          positions[name] = {
-            x: centerX + circleRadius * Math.cos(angle),
-            y: centerY + circleRadius * Math.sin(angle),
-          };
-        });
-
         const edgeLayer = createSvgNode("g");
         const labelLayer = createSvgNode("g");
         const nodeLayer = createSvgNode("g");
@@ -794,18 +784,107 @@
         const edges = [];
         model.states.forEach((state) => {
           const sourceName = state.name.trim();
-          if (!sourceName || !positions[sourceName]) {
+          if (!sourceName || !nodeSet.has(sourceName)) {
             return;
           }
           getOrderedTransitions(state).forEach((transition) => {
             const targetName = transition.target.trim();
-            if (!targetName || !positions[targetName]) {
+            if (!targetName || !nodeSet.has(targetName)) {
               return;
             }
             const labelText = transition.type === "default" ? "default" : transition.regex || "?";
             edges.push({ sourceName, targetName, labelText });
           });
         });
+
+        const positions = {};
+        const margin = nodeRadius + 36;
+        const cols = Math.max(2, Math.ceil(Math.sqrt(count)));
+        const rows = Math.max(2, Math.ceil(count / cols));
+        const cellW = (width - margin * 2) / Math.max(1, cols - 1);
+        const cellH = (height - margin * 2) / Math.max(1, rows - 1);
+
+        nodeNames.forEach((name, index) => {
+          const col = index % cols;
+          const row = Math.floor(index / cols);
+          const jitterX = ((index * 17) % 9) - 4;
+          const jitterY = ((index * 23) % 9) - 4;
+          positions[name] = {
+            x: margin + col * cellW + jitterX,
+            y: margin + row * cellH + jitterY,
+          };
+        });
+
+        const repelK = 68000;
+        const springK = 0.01;
+        const targetEdge = Math.min(width, height) / Math.max(3, Math.sqrt(count));
+        const gravityK = 0.0035;
+        const damping = 0.87;
+        const velocity = {};
+        nodeNames.forEach((name) => {
+          velocity[name] = { x: 0, y: 0 };
+        });
+
+        for (let iter = 0; iter < 260; iter += 1) {
+          const force = {};
+          nodeNames.forEach((name) => {
+            force[name] = { x: 0, y: 0 };
+          });
+
+          for (let i = 0; i < nodeNames.length; i += 1) {
+            const aName = nodeNames[i];
+            const a = positions[aName];
+            for (let j = i + 1; j < nodeNames.length; j += 1) {
+              const bName = nodeNames[j];
+              const b = positions[bName];
+              let dx = b.x - a.x;
+              let dy = b.y - a.y;
+              let distSq = dx * dx + dy * dy;
+              if (distSq < 1) {
+                dx = 0.5;
+                dy = 0.5;
+                distSq = 1;
+              }
+              const dist = Math.sqrt(distSq);
+              const rep = repelK / distSq;
+              const fx = (dx / dist) * rep;
+              const fy = (dy / dist) * rep;
+              force[aName].x -= fx;
+              force[aName].y -= fy;
+              force[bName].x += fx;
+              force[bName].y += fy;
+            }
+          }
+
+          edges.forEach((edge) => {
+            const a = positions[edge.sourceName];
+            const b = positions[edge.targetName];
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const dist = Math.max(1, Math.hypot(dx, dy));
+            const stretch = dist - targetEdge;
+            const fx = (dx / dist) * stretch * springK;
+            const fy = (dy / dist) * stretch * springK;
+            force[edge.sourceName].x += fx;
+            force[edge.sourceName].y += fy;
+            force[edge.targetName].x -= fx;
+            force[edge.targetName].y -= fy;
+          });
+
+          nodeNames.forEach((name) => {
+            const p = positions[name];
+            force[name].x += (centerX - p.x) * gravityK;
+            force[name].y += (centerY - p.y) * gravityK;
+
+            velocity[name].x = (velocity[name].x + force[name].x) * damping;
+            velocity[name].y = (velocity[name].y + force[name].y) * damping;
+            p.x += velocity[name].x;
+            p.y += velocity[name].y;
+
+            p.x = Math.max(margin, Math.min(width - margin, p.x));
+            p.y = Math.max(margin, Math.min(height - margin, p.y));
+          });
+        }
 
         const pairGroups = new Map();
         edges.forEach((edge, index) => {
