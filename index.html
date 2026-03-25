@@ -52,7 +52,7 @@
 
       .grid {
         display: grid;
-        grid-template-columns: 1.4fr 1fr;
+        grid-template-columns: 0.9fr 1.5fr;
         gap: 14px;
       }
 
@@ -107,14 +107,38 @@
 
       .states {
         display: grid;
-        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: 8px;
+        grid-auto-flow: row dense;
+        gap: 8px;
+        align-items: start;
       }
 
       .state-card {
         border: 1px solid var(--line);
         border-radius: 10px;
         padding: 10px;
-        background: #fffeff;
+        background: #fffdf8;
+      }
+
+      .state-card[data-tone="a"] {
+        background: #fff7eb;
+        border-color: #e6d9c7;
+      }
+
+      .state-card[data-tone="b"] {
+        background: #eef6ff;
+        border-color: #cfe0f8;
+      }
+
+      .state-card[data-tone="c"] {
+        background: #eefdf5;
+        border-color: #cde8d8;
+      }
+
+      .state-card[data-tone="d"] {
+        background: #fff0f3;
+        border-color: #efccd4;
       }
 
       .state-head {
@@ -230,6 +254,11 @@
           grid-template-columns: 1fr;
         }
 
+        .states {
+          grid-template-columns: 1fr;
+          grid-auto-rows: auto;
+        }
+
         .transition-row {
           grid-template-columns: 1fr;
         }
@@ -267,7 +296,6 @@
 
       <section class="viz">
         <div id="graph" class="graph"></div>
-        <pre id="output"></pre>
       </section>
     </main>
 
@@ -311,7 +339,6 @@
       const dslInput = document.getElementById("dslInput");
       const statesRoot = document.getElementById("states");
       const errorsBox = document.getElementById("errors");
-      const output = document.getElementById("output");
       const graph = document.getElementById("graph");
       const addStateButton = document.getElementById("addState");
       const loadFsmButton = document.getElementById("loadFsm");
@@ -320,7 +347,8 @@
       const exportPngButton = document.getElementById("exportPng");
       const stateTemplate = document.getElementById("stateTemplate");
       const transitionTemplate = document.getElementById("transitionTemplate");
-      const URL_FSM_PREFIX = "#fsm=";
+      const URL_FSM64_PREFIX = "#fsm64=";
+      const URL_FSM_LEGACY_PREFIX = "#fsm=";
 
       let machine = {
         states: [{ name: "Idle", isFinal: false, transitions: [] }],
@@ -336,12 +364,36 @@
         return { type, regex, target };
       }
 
-      function readDslFromUrl() {
-        if (!window.location.hash.startsWith(URL_FSM_PREFIX)) {
-          return null;
+      function base64UrlEncodeUtf8(text) {
+        const bytes = new TextEncoder().encode(text);
+        let binary = "";
+        for (const byte of bytes) {
+          binary += String.fromCharCode(byte);
         }
+        return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+      }
+
+      function base64UrlDecodeUtf8(encoded) {
+        const padded = encoded.replace(/-/g, "+").replace(/_/g, "/");
+        const withPadding = padded + "=".repeat((4 - (padded.length % 4)) % 4);
+        const binary = atob(withPadding);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return new TextDecoder().decode(bytes);
+      }
+
+      function readDslFromUrl() {
         try {
-          return decodeURIComponent(window.location.hash.slice(URL_FSM_PREFIX.length));
+          if (window.location.hash.startsWith(URL_FSM64_PREFIX)) {
+            const encoded = window.location.hash.slice(URL_FSM64_PREFIX.length);
+            return base64UrlDecodeUtf8(encoded);
+          }
+          if (window.location.hash.startsWith(URL_FSM_LEGACY_PREFIX)) {
+            return decodeURIComponent(window.location.hash.slice(URL_FSM_LEGACY_PREFIX.length));
+          }
+          return null;
         } catch (_error) {
           return null;
         }
@@ -349,7 +401,7 @@
 
       function writeDslToUrl(dsl) {
         const trimmed = dsl.trim();
-        const nextHash = trimmed ? `${URL_FSM_PREFIX}${encodeURIComponent(dsl)}` : "";
+        const nextHash = trimmed ? `${URL_FSM64_PREFIX}${base64UrlEncodeUtf8(dsl)}` : "";
         const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
         window.history.replaceState(null, "", nextUrl);
       }
@@ -803,11 +855,15 @@
         nodeNames.forEach((name, index) => {
           const position = positions[name];
           const circle = createSvgNode("circle");
+          const isInitial = index === 0;
+          const isEven = index % 2 === 0;
+          const fillColor = isInitial ? "#dbe9ff" : isEven ? "#fff4e4" : "#eaf3ff";
+          const strokeColor = isInitial ? "#2058c4" : isEven ? "#cc8a22" : "#2d67c8";
           circle.setAttribute("cx", String(position.x));
           circle.setAttribute("cy", String(position.y));
           circle.setAttribute("r", String(nodeRadius));
-          circle.setAttribute("fill", index === 0 ? "#dbe9ff" : "#fff");
-          circle.setAttribute("stroke", "#2058c4");
+          circle.setAttribute("fill", fillColor);
+          circle.setAttribute("stroke", strokeColor);
           circle.setAttribute("stroke-width", "1.8");
           nodeLayer.appendChild(circle);
 
@@ -817,7 +873,7 @@
             inner.setAttribute("cy", String(position.y));
             inner.setAttribute("r", String(nodeRadius - 5));
             inner.setAttribute("fill", "none");
-            inner.setAttribute("stroke", "#2058c4");
+            inner.setAttribute("stroke", strokeColor);
             inner.setAttribute("stroke-width", "1.3");
             nodeLayer.appendChild(inner);
           }
@@ -859,7 +915,7 @@
 
           nameInput.addEventListener("input", () => {
             machine.states[stateIndex].name = nameInput.value;
-            syncFromUI();
+            syncFromUI({ rerenderUI: false });
           });
 
           isFinalInput.addEventListener("change", () => {
@@ -928,12 +984,12 @@
 
             regexInput.addEventListener("input", () => {
               machine.states[stateIndex].transitions[transitionIndex].regex = regexInput.value;
-              syncFromUI();
+              syncFromUI({ rerenderUI: false });
             });
 
             targetInput.addEventListener("input", () => {
               machine.states[stateIndex].transitions[transitionIndex].target = targetInput.value;
-              syncFromUI();
+              syncFromUI({ rerenderUI: false });
             });
 
             removeTransitionButton.addEventListener("click", () => {
@@ -948,15 +1004,116 @@
         });
       }
 
-      function syncFromUI() {
+      function applyMasonryLayout() {
+        const cards = statesRoot.querySelectorAll(".state-card");
+        if (!cards.length) {
+          return;
+        }
+
+        if (window.innerWidth <= 860) {
+          cards.forEach((card, index) => {
+            card.style.gridRowEnd = "";
+            card.dataset.tone = ["a", "b", "c", "d"][index % 4];
+          });
+          return;
+        }
+
+        const styles = window.getComputedStyle(statesRoot);
+        const rowHeight = parseFloat(styles.getPropertyValue("grid-auto-rows")) || 8;
+        const colGap = parseFloat(styles.getPropertyValue("column-gap")) || 8;
+        const rowGap = parseFloat(styles.getPropertyValue("row-gap")) || 8;
+
+        cards.forEach((card) => {
+          const cardHeight = card.getBoundingClientRect().height;
+          const rowSpan = Math.max(1, Math.ceil((cardHeight + rowGap) / (rowHeight + rowGap)));
+          card.style.gridRowEnd = `span ${rowSpan}`;
+        });
+
+        // Ensure positions are measured after grid-row spans have taken effect.
+        // eslint-disable-next-line no-unused-expressions
+        statesRoot.offsetHeight;
+
+        const elements = Array.from(cards);
+        const rects = elements.map((card) => card.getBoundingClientRect());
+        const neighbors = rects.map(() => new Set());
+
+        function overlapsPositive(aStart, aEnd, bStart, bEnd) {
+          return Math.min(aEnd, bEnd) - Math.max(aStart, bStart) > 6;
+        }
+
+        function areAdjacent(r1, r2) {
+          const verticalGap = Math.min(
+            Math.abs(r1.bottom - r2.top),
+            Math.abs(r2.bottom - r1.top)
+          );
+          const horizontalGap = Math.min(
+            Math.abs(r1.right - r2.left),
+            Math.abs(r2.right - r1.left)
+          );
+
+          const verticalTouch =
+            verticalGap <= rowGap * 2 + 6 &&
+            overlapsPositive(r1.left, r1.right, r2.left, r2.right);
+          const horizontalTouch =
+            horizontalGap <= colGap * 2 + 6 &&
+            overlapsPositive(r1.top, r1.bottom, r2.top, r2.bottom);
+          return verticalTouch || horizontalTouch;
+        }
+
+        for (let i = 0; i < rects.length; i += 1) {
+          for (let j = i + 1; j < rects.length; j += 1) {
+            if (areAdjacent(rects[i], rects[j])) {
+              neighbors[i].add(j);
+              neighbors[j].add(i);
+            }
+          }
+        }
+
+        const order = elements
+          .map((_, index) => index)
+          .sort((a, b) => {
+            const topDiff = rects[a].top - rects[b].top;
+            if (Math.abs(topDiff) > 2) {
+              return topDiff;
+            }
+            return rects[a].left - rects[b].left;
+          });
+
+        const palette = ["a", "b", "c", "d"];
+        const toneCounts = { a: 0, b: 0, c: 0, d: 0 };
+        const assigned = new Array(elements.length).fill("");
+        order.forEach((index) => {
+          const used = new Set();
+          neighbors[index].forEach((neighborIndex) => {
+            const tone = assigned[neighborIndex];
+            if (tone) {
+              used.add(tone);
+            }
+          });
+          const available = palette.filter((tone) => !used.has(tone));
+          const chosen =
+            available.sort((a, b) => toneCounts[a] - toneCounts[b])[0] || "a";
+          assigned[index] = chosen;
+          toneCounts[chosen] += 1;
+        });
+
+        elements.forEach((card, index) => {
+          card.dataset.tone = assigned[index];
+        });
+      }
+
+      function syncFromUI(options = {}) {
+        const { rerenderUI = true } = options;
         syncingFromUI = true;
         dslInput.value = buildDsl(machine);
         syncingFromUI = false;
         writeDslToUrl(dslInput.value);
         errorsBox.textContent = "";
-        renderUIFromMachine();
-        output.textContent = summarize(machine);
+        if (rerenderUI) {
+          renderUIFromMachine();
+        }
         renderGraph(machine);
+        requestAnimationFrame(applyMasonryLayout);
       }
 
       function syncFromDsl() {
@@ -974,8 +1131,8 @@
         writeDslToUrl(dslInput.value);
         errorsBox.textContent = parsed.errors.join("\n");
         renderUIFromMachine();
-        output.textContent = summarize(machine);
         renderGraph(machine);
+        requestAnimationFrame(applyMasonryLayout);
       }
 
       addStateButton.addEventListener("click", () => {
@@ -1012,6 +1169,9 @@
       });
 
       dslInput.addEventListener("input", syncFromDsl);
+      window.addEventListener("resize", () => {
+        requestAnimationFrame(applyMasonryLayout);
+      });
       window.addEventListener("hashchange", () => {
         const dslFromUrl = readDslFromUrl();
         if (dslFromUrl === null || dslFromUrl === dslInput.value) {
