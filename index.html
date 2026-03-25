@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FMM Visualizer</title>
+    <style>
+      :root {
+        --bg: #f4efe6;
+        --panel: #fffdf8;
+        --ink: #201f1c;
+        --muted: #625d56;
+        --line: #d9d2c8;
+        --accent: #0059b8;
+        --accent-soft: #edf4ff;
+        --danger: #b42318;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "IBM Plex Sans", "Segoe UI", Tahoma, sans-serif;
+        background: radial-gradient(circle at 10% 0%, #fffbf1, var(--bg) 55%);
+        color: var(--ink);
+        padding: 22px 12px;
+        display: flex;
+        justify-content: center;
+      }
+
+      .app {
+        width: min(1600px, 98vw);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 20px;
+        box-shadow: 0 10px 30px rgba(15, 15, 15, 0.07);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.35rem, 1.9vw, 1.75rem);
+      }
+
+      .subtitle {
+        margin: 8px 0 16px;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.4fr 1fr;
+        gap: 14px;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        background: #fff;
+      }
+
+      .panel h2 {
+        margin: 0 0 8px;
+        font-size: 1rem;
+      }
+
+      .hint {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 0.87rem;
+      }
+
+      textarea,
+      input,
+      select,
+      button {
+        font: inherit;
+      }
+
+      textarea,
+      input,
+      select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 9px 10px;
+        background: #fff;
+      }
+
+      textarea {
+        min-height: 230px;
+        resize: vertical;
+        font-family: "IBM Plex Mono", "Consolas", monospace;
+      }
+
+      .errors {
+        margin-top: 8px;
+        color: var(--danger);
+        font-size: 0.87rem;
+        min-height: 1.2rem;
+        white-space: pre-wrap;
+      }
+
+      .states {
+        display: grid;
+        gap: 10px;
+      }
+
+      .state-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+        background: #fffeff;
+      }
+
+      .state-head {
+        display: grid;
+        grid-template-columns: 1fr auto auto auto;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .final-toggle {
+        font-size: 0.82rem;
+        color: var(--muted);
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        white-space: nowrap;
+      }
+
+      .final-toggle input {
+        width: auto;
+      }
+
+      .badge {
+        border: 1px solid var(--accent);
+        color: var(--accent);
+        border-radius: 999px;
+        padding: 5px 9px;
+        font-size: 0.75rem;
+        background: var(--accent-soft);
+      }
+
+      .transition-row {
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 8px;
+        display: grid;
+        grid-template-columns: 120px 1fr 1fr auto;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+
+      .transition-row:last-child {
+        margin-bottom: 0;
+      }
+
+      .transition-row.default .regex-input {
+        opacity: 0.45;
+      }
+
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #fff;
+        padding: 8px 11px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        border-color: var(--accent);
+      }
+
+      .primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .danger {
+        color: var(--danger);
+      }
+
+      .viz {
+        margin-top: 14px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--accent-soft);
+        padding: 12px;
+      }
+
+      .graph {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+        min-height: 260px;
+        margin-bottom: 10px;
+        overflow: auto;
+      }
+
+      .graph svg {
+        width: 100%;
+        height: 100%;
+        min-height: 260px;
+        display: block;
+      }
+
+      .viz pre {
+        margin: 0;
+        font-family: "IBM Plex Mono", "Consolas", monospace;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+
+      @media (max-width: 860px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .transition-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <h1>Finite Machine Visualizer</h1>
+      <p class="subtitle">Write your DSL or use the UI editor. Both views stay synced.</p>
+
+      <div class="grid">
+        <section class="panel">
+          <h2>Language Input</h2>
+          <p class="hint">
+            First line is initial state. Other lines are either state names or transitions
+            (`regex -> new_state` or `->default_state`). Wrap a state in `()` to mark final.
+          </p>
+          <textarea id="dslInput" spellcheck="false"></textarea>
+          <div id="errors" class="errors"></div>
+        </section>
+
+        <section class="panel">
+          <h2>UI Editor</h2>
+          <div id="states" class="states"></div>
+          <div class="actions">
+            <button id="addState" type="button" class="primary">Add State</button>
+            <button id="loadFsm" type="button">Load .fsm File</button>
+            <button id="exportFsm" type="button">Export .fsm File</button>
+            <button id="exportPng" type="button">Export PNG</button>
+          </div>
+          <input id="loadFsmFile" type="file" accept=".fsm,text/plain" hidden />
+        </section>
+      </div>
+
+      <section class="viz">
+        <div id="graph" class="graph"></div>
+        <pre id="output"></pre>
+      </section>
+    </main>
+
+    <template id="stateTemplate">
+      <article class="state-card">
+        <div class="state-head">
+          <input data-field="stateName" type="text" placeholder="State name" />
+          <label class="final-toggle">
+            <input data-field="isFinal" type="checkbox" />
+            Final
+          </label>
+          <span data-field="initialBadge" class="badge">Initial</span>
+          <button data-action="removeState" type="button" class="danger">Remove</button>
+        </div>
+        <div data-field="transitions"></div>
+        <div class="actions">
+          <button data-action="addRegex" type="button">Add Regex Transition</button>
+          <button data-action="addDefault" type="button">Add Default Transition</button>
+        </div>
+      </article>
+    </template>
+
+    <template id="transitionTemplate">
+      <div class="transition-row">
+        <select data-field="type">
+          <option value="regex">Regex</option>
+          <option value="default">Default</option>
+        </select>
+        <input
+          data-field="regex"
+          class="regex-input"
+          type="text"
+          placeholder="regex, e.g. ^click$"
+        />
+        <input data-field="target" type="text" placeholder="next state" />
+        <button data-action="removeTransition" class="danger" type="button">Remove</button>
+      </div>
+    </template>
+
+    <script>
+      const dslInput = document.getElementById("dslInput");
+      const statesRoot = document.getElementById("states");
+      const errorsBox = document.getElementById("errors");
+      const output = document.getElementById("output");
+      const graph = document.getElementById("graph");
+      const addStateButton = document.getElementById("addState");
+      const loadFsmButton = document.getElementById("loadFsm");
+      const loadFsmFileInput = document.getElementById("loadFsmFile");
+      const exportFsmButton = document.getElementById("exportFsm");
+      const exportPngButton = document.getElementById("exportPng");
+      const stateTemplate = document.getElementById("stateTemplate");
+      const transitionTemplate = document.getElementById("transitionTemplate");
+      const URL_FSM_PREFIX = "#fsm=";
+
+      let machine = {
+        states: [{ name: "Idle", isFinal: false, transitions: [] }],
+      };
+
+      let syncingFromUI = false;
+
+      function createEmptyState(name = "", isFinal = false) {
+        return { name, isFinal, transitions: [] };
+      }
+
+      function createTransition(type = "regex", regex = "", target = "") {
+        return { type, regex, target };
+      }
+
+      function readDslFromUrl() {
+        if (!window.location.hash.startsWith(URL_FSM_PREFIX)) {
+          return null;
+        }
+        try {
+          return decodeURIComponent(window.location.hash.slice(URL_FSM_PREFIX.length));
+        } catch (_error) {
+          return null;
+        }
+      }
+
+      function writeDslToUrl(dsl) {
+        const trimmed = dsl.trim();
+        const nextHash = trimmed ? `${URL_FSM_PREFIX}${encodeURIComponent(dsl)}` : "";
+        const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
+        window.history.replaceState(null, "", nextUrl);
+      }
+
+      function getOrderedTransitions(state) {
+        const regexTransitions = state.transitions.filter((transition) => transition.type !== "default");
+        const defaultTransitions = state.transitions.filter(
+          (transition) => transition.type === "default"
+        );
+        return [...regexTransitions, ...defaultTransitions];
+      }
+
+      function downloadBlob(filename, blob) {
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      function exportFsmFile() {
+        const dsl = dslInput.value || buildDsl(machine);
+        const blob = new Blob([dsl], { type: "text/plain;charset=utf-8" });
+        downloadBlob("machine.fsm", blob);
+      }
+
+      async function exportGraphAsPng() {
+        const svg = graph.querySelector("svg");
+        if (!svg) {
+          errorsBox.textContent = "Nothing to export yet. Add at least one state.";
+          return;
+        }
+
+        const viewBoxRaw = svg.getAttribute("viewBox");
+        const parts = viewBoxRaw ? viewBoxRaw.trim().split(/\s+/).map(Number) : [0, 0, 1200, 800];
+        const width = Math.max(1, Number(parts[2]) || 1200);
+        const height = Math.max(1, Number(parts[3]) || 800);
+
+        const clone = svg.cloneNode(true);
+        clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+        clone.setAttribute("width", String(width));
+        clone.setAttribute("height", String(height));
+
+        const serialized = new XMLSerializer().serializeToString(clone);
+        const svgBlob = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
+        const svgUrl = URL.createObjectURL(svgBlob);
+
+        try {
+          const img = new Image();
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = svgUrl;
+          });
+
+          const canvas = document.createElement("canvas");
+          const scale = 2;
+          canvas.width = Math.round(width * scale);
+          canvas.height = Math.round(height * scale);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            throw new Error("Canvas context unavailable");
+          }
+          ctx.setTransform(scale, 0, 0, scale, 0, 0);
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+
+          const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+          if (!pngBlob) {
+            throw new Error("PNG generation failed");
+          }
+          downloadBlob("machine-graph.png", pngBlob);
+          errorsBox.textContent = "";
+        } catch (_error) {
+          errorsBox.textContent = "PNG export failed in this browser.";
+        } finally {
+          URL.revokeObjectURL(svgUrl);
+        }
+      }
+
+      function parseStateLine(line) {
+        const trimmed = line.trim();
+        const finalMatch = trimmed.match(/^\((.*)\)$/);
+        if (finalMatch) {
+          return { name: finalMatch[1].trim(), isFinal: true };
+        }
+        return { name: trimmed, isFinal: false };
+      }
+
+      function formatStateLine(state) {
+        const name = state.name.trim();
+        return state.isFinal ? `(${name})` : name;
+      }
+
+      function parseDsl(text) {
+        const lines = text
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+
+        const errors = [];
+        if (!lines.length) {
+          return {
+            machine: { states: [createEmptyState("")] },
+            errors: ["Line 1 must be the initial state name."],
+          };
+        }
+
+        const initialState = parseStateLine(lines[0]);
+        const parsed = {
+          states: [createEmptyState(initialState.name, initialState.isFinal)],
+        };
+
+        let currentState = parsed.states[0];
+        let hasDefaultInCurrentState = false;
+
+        for (let i = 1; i < lines.length; i += 1) {
+          const line = lines[i];
+          const lineNo = i + 1;
+
+          if (!line.includes("->")) {
+            const parsedState = parseStateLine(line);
+            currentState = createEmptyState(parsedState.name, parsedState.isFinal);
+            parsed.states.push(currentState);
+            hasDefaultInCurrentState = false;
+            continue;
+          }
+
+          const arrowIndex = line.indexOf("->");
+          const left = line.slice(0, arrowIndex).trim();
+          const right = line.slice(arrowIndex + 2).trim();
+
+          if (!right) {
+            errors.push(`Line ${lineNo}: transition target state is missing.`);
+            continue;
+          }
+
+          if (!left) {
+            if (hasDefaultInCurrentState) {
+              errors.push(
+                `Line ${lineNo}: only one default transition is allowed per state. Ignored.`
+              );
+              continue;
+            }
+            currentState.transitions.push(createTransition("default", "", right));
+            hasDefaultInCurrentState = true;
+            continue;
+          }
+
+          currentState.transitions.push(createTransition("regex", left, right));
+        }
+
+        return { machine: parsed, errors };
+      }
+
+      function buildDsl(model) {
+        if (!model.states.length) {
+          return "";
+        }
+
+        const lines = [];
+
+        model.states.forEach((state, index) => {
+          if (index === 0) {
+            lines.push(formatStateLine(state));
+          } else {
+            lines.push(formatStateLine(state));
+          }
+
+          getOrderedTransitions(state).forEach((transition) => {
+            const target = transition.target.trim();
+            if (transition.type === "default") {
+              lines.push(`->${target}`);
+            } else {
+              lines.push(`${transition.regex} -> ${target}`);
+            }
+          });
+        });
+
+        return lines.join("\n");
+      }
+
+      function summarize(model) {
+        if (!model.states.length || !model.states[0].name.trim()) {
+          return "No machine yet. Add an initial state on line 1.";
+        }
+
+        const initial = model.states[0].name.trim();
+        const lines = [`Initial: ${initial}`, ""];
+
+        model.states.forEach((state, index) => {
+          const name = state.name.trim() || "(unnamed state)";
+          lines.push(`${index === 0 ? "*" : "-"} ${name}${state.isFinal ? " [final]" : ""}`);
+
+          const transitions = state.transitions;
+          if (!transitions.length) {
+            lines.push("   (no transitions)");
+            return;
+          }
+
+          getOrderedTransitions(state).forEach((t) => {
+            if (t.type === "default") {
+              lines.push(`   default -> ${t.target || "?"}`);
+            } else {
+              lines.push(`   ${t.regex || "?"} -> ${t.target || "?"}`);
+            }
+          });
+        });
+
+        return lines.join("\n");
+      }
+
+      function createSvgNode(name) {
+        return document.createElementNS("http://www.w3.org/2000/svg", name);
+      }
+
+      function appendEdgeLabel(layer, x, y, text) {
+        const group = createSvgNode("g");
+        const fontSize = 11;
+        const padX = 6;
+        const padY = 3;
+        const approxCharWidth = 6.5;
+        const width = Math.max(18, text.length * approxCharWidth) + padX * 2;
+        const height = fontSize + padY * 2;
+
+        const rect = createSvgNode("rect");
+        rect.setAttribute("x", String(x - width / 2));
+        rect.setAttribute("y", String(y - height / 2));
+        rect.setAttribute("width", String(width));
+        rect.setAttribute("height", String(height));
+        rect.setAttribute("rx", "4");
+        rect.setAttribute("ry", "4");
+        rect.setAttribute("fill", "#edf4ff");
+        rect.setAttribute("stroke", "#c9d8f0");
+        rect.setAttribute("stroke-width", "0.9");
+        group.appendChild(rect);
+
+        const label = createSvgNode("text");
+        label.setAttribute("x", String(x));
+        label.setAttribute("y", String(y));
+        label.setAttribute("text-anchor", "middle");
+        label.setAttribute("dominant-baseline", "middle");
+        label.setAttribute("font-size", String(fontSize));
+        label.setAttribute("fill", "#2f2c28");
+        label.textContent = text;
+        group.appendChild(label);
+        layer.appendChild(group);
+      }
+
+      function renderGraph(model) {
+        graph.innerHTML = "";
+
+        const nodeNames = [];
+        const nodeSet = new Set();
+        const nodeMeta = {};
+        model.states.forEach((state) => {
+          const stateName = state.name.trim();
+          if (stateName && !nodeSet.has(stateName)) {
+            nodeSet.add(stateName);
+            nodeNames.push(stateName);
+          }
+          if (stateName) {
+            nodeMeta[stateName] = {
+              isFinal: Boolean(nodeMeta[stateName]?.isFinal || state.isFinal),
+            };
+          }
+          state.transitions.forEach((transition) => {
+            const target = transition.target.trim();
+            if (target && !nodeSet.has(target)) {
+              nodeSet.add(target);
+              nodeNames.push(target);
+            }
+          });
+        });
+
+        if (!nodeNames.length) {
+          graph.textContent = "Graph will appear once you add states.";
+          return;
+        }
+
+        const nodeRadius = 26;
+        const count = nodeNames.length;
+        const circleRadius = Math.max(120, count * 22);
+        const width = circleRadius * 2 + 160;
+        const height = circleRadius * 2 + 160;
+        const centerX = width / 2;
+        const centerY = height / 2;
+
+        const svg = createSvgNode("svg");
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+        const defs = createSvgNode("defs");
+        const marker = createSvgNode("marker");
+        marker.setAttribute("id", "arrow");
+        marker.setAttribute("viewBox", "0 0 10 10");
+        marker.setAttribute("refX", "9");
+        marker.setAttribute("refY", "5");
+        marker.setAttribute("markerWidth", "8");
+        marker.setAttribute("markerHeight", "8");
+        marker.setAttribute("orient", "auto");
+        const arrowPath = createSvgNode("path");
+        arrowPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+        arrowPath.setAttribute("fill", "#58534f");
+        marker.appendChild(arrowPath);
+        defs.appendChild(marker);
+        svg.appendChild(defs);
+
+        const positions = {};
+        nodeNames.forEach((name, index) => {
+          const angle = (2 * Math.PI * index) / count - Math.PI / 2;
+          positions[name] = {
+            x: centerX + circleRadius * Math.cos(angle),
+            y: centerY + circleRadius * Math.sin(angle),
+          };
+        });
+
+        const edgeLayer = createSvgNode("g");
+        const labelLayer = createSvgNode("g");
+        const nodeLayer = createSvgNode("g");
+
+        const edges = [];
+        model.states.forEach((state) => {
+          const sourceName = state.name.trim();
+          if (!sourceName || !positions[sourceName]) {
+            return;
+          }
+          getOrderedTransitions(state).forEach((transition) => {
+            const targetName = transition.target.trim();
+            if (!targetName || !positions[targetName]) {
+              return;
+            }
+            const labelText = transition.type === "default" ? "default" : transition.regex || "?";
+            edges.push({ sourceName, targetName, labelText });
+          });
+        });
+
+        const pairGroups = new Map();
+        edges.forEach((edge, index) => {
+          const key =
+            edge.sourceName < edge.targetName
+              ? `${edge.sourceName}|||${edge.targetName}`
+              : `${edge.targetName}|||${edge.sourceName}`;
+          if (!pairGroups.has(key)) {
+            pairGroups.set(key, []);
+          }
+          pairGroups.get(key).push(index);
+        });
+
+        const directionOffsets = new Map();
+        pairGroups.forEach((edgeIndexes) => {
+          const dirBuckets = new Map();
+          edgeIndexes.forEach((edgeIndex) => {
+            const edge = edges[edgeIndex];
+            const dirKey = `${edge.sourceName}->${edge.targetName}`;
+            if (!dirBuckets.has(dirKey)) {
+              dirBuckets.set(dirKey, []);
+            }
+            dirBuckets.get(dirKey).push(edgeIndex);
+          });
+
+          const hasOppositeDirections = dirBuckets.size > 1;
+
+          edgeIndexes.forEach((edgeIndex) => {
+            const edge = edges[edgeIndex];
+            const dirKey = `${edge.sourceName}->${edge.targetName}`;
+            const sameDir = dirBuckets.get(dirKey);
+            const sameDirIndex = sameDir.indexOf(edgeIndex);
+            const sameDirCount = sameDir.length;
+
+            let offset = 0;
+            if (hasOppositeDirections) {
+              const base = 28;
+              const spread = 14;
+              offset = base + (sameDirIndex - (sameDirCount - 1) / 2) * spread;
+            } else if (sameDirCount > 1) {
+              const spread = 16;
+              offset = (sameDirIndex - (sameDirCount - 1) / 2) * spread;
+            }
+
+            directionOffsets.set(edgeIndex, offset);
+          });
+        });
+
+        edges.forEach((edge, edgeIndex) => {
+          const sourceName = edge.sourceName;
+          const targetName = edge.targetName;
+          const source = positions[sourceName];
+          const target = positions[targetName];
+          const labelText = edge.labelText;
+
+          if (sourceName === targetName) {
+              const loop = createSvgNode("path");
+              const startX = source.x + nodeRadius * 0.6;
+              const startY = source.y - nodeRadius * 0.8;
+              const ctrl1X = source.x + nodeRadius * 1.8;
+              const ctrl1Y = source.y - nodeRadius * 2.2;
+              const ctrl2X = source.x - nodeRadius * 1.8;
+              const ctrl2Y = source.y - nodeRadius * 2.2;
+              const endX = source.x - nodeRadius * 0.6;
+              const endY = source.y - nodeRadius * 0.8;
+              loop.setAttribute(
+                "d",
+                `M ${startX} ${startY} C ${ctrl1X} ${ctrl1Y}, ${ctrl2X} ${ctrl2Y}, ${endX} ${endY}`
+              );
+              loop.setAttribute("fill", "none");
+              loop.setAttribute("stroke", "#58534f");
+              loop.setAttribute("stroke-width", "1.7");
+              loop.setAttribute("marker-end", "url(#arrow)");
+              edgeLayer.appendChild(loop);
+
+              appendEdgeLabel(labelLayer, source.x, source.y - nodeRadius * 2.45, labelText);
+              return;
+          }
+
+          const dx = target.x - source.x;
+          const dy = target.y - source.y;
+          const distance = Math.hypot(dx, dy) || 1;
+          const ux = dx / distance;
+          const uy = dy / distance;
+          const nx = -uy;
+          const ny = ux;
+          const startX = source.x + ux * nodeRadius;
+          const startY = source.y + uy * nodeRadius;
+          const endX = target.x - ux * nodeRadius;
+          const endY = target.y - uy * nodeRadius;
+          const offset = directionOffsets.get(edgeIndex) || 0;
+          const controlX = (startX + endX) / 2 + nx * offset;
+          const controlY = (startY + endY) / 2 + ny * offset;
+
+          const curve = createSvgNode("path");
+          curve.setAttribute(
+            "d",
+            `M ${startX} ${startY} Q ${controlX} ${controlY} ${endX} ${endY}`
+          );
+          curve.setAttribute("fill", "none");
+          curve.setAttribute("stroke", "#58534f");
+          curve.setAttribute("stroke-width", "1.7");
+          curve.setAttribute("marker-end", "url(#arrow)");
+          edgeLayer.appendChild(curve);
+
+          const labelX = 0.25 * startX + 0.5 * controlX + 0.25 * endX;
+          const labelY = 0.25 * startY + 0.5 * controlY + 0.25 * endY - 4;
+          appendEdgeLabel(labelLayer, labelX, labelY, labelText);
+        });
+
+        nodeNames.forEach((name, index) => {
+          const position = positions[name];
+          const circle = createSvgNode("circle");
+          circle.setAttribute("cx", String(position.x));
+          circle.setAttribute("cy", String(position.y));
+          circle.setAttribute("r", String(nodeRadius));
+          circle.setAttribute("fill", index === 0 ? "#dbe9ff" : "#fff");
+          circle.setAttribute("stroke", "#2058c4");
+          circle.setAttribute("stroke-width", "1.8");
+          nodeLayer.appendChild(circle);
+
+          if (nodeMeta[name]?.isFinal) {
+            const inner = createSvgNode("circle");
+            inner.setAttribute("cx", String(position.x));
+            inner.setAttribute("cy", String(position.y));
+            inner.setAttribute("r", String(nodeRadius - 5));
+            inner.setAttribute("fill", "none");
+            inner.setAttribute("stroke", "#2058c4");
+            inner.setAttribute("stroke-width", "1.3");
+            nodeLayer.appendChild(inner);
+          }
+
+          const label = createSvgNode("text");
+          label.setAttribute("x", String(position.x));
+          label.setAttribute("y", String(position.y + 4));
+          label.setAttribute("text-anchor", "middle");
+          label.setAttribute("font-size", "11");
+          label.setAttribute("fill", "#1b2b54");
+          label.textContent = name;
+          nodeLayer.appendChild(label);
+        });
+
+        svg.appendChild(edgeLayer);
+        svg.appendChild(labelLayer);
+        svg.appendChild(nodeLayer);
+        graph.appendChild(svg);
+      }
+
+      function renderUIFromMachine() {
+        statesRoot.innerHTML = "";
+
+        machine.states.forEach((state, stateIndex) => {
+          const card = stateTemplate.content.firstElementChild.cloneNode(true);
+          const nameInput = card.querySelector('[data-field="stateName"]');
+          const isFinalInput = card.querySelector('[data-field="isFinal"]');
+          const initialBadge = card.querySelector('[data-field="initialBadge"]');
+          const removeStateButton = card.querySelector('[data-action="removeState"]');
+          const transitionsRoot = card.querySelector('[data-field="transitions"]');
+          const addRegexButton = card.querySelector('[data-action="addRegex"]');
+          const addDefaultButton = card.querySelector('[data-action="addDefault"]');
+
+          nameInput.value = state.name;
+          isFinalInput.checked = Boolean(state.isFinal);
+          initialBadge.style.display = stateIndex === 0 ? "inline-block" : "none";
+          removeStateButton.style.display = stateIndex === 0 ? "none" : "inline-block";
+          addDefaultButton.disabled = state.transitions.some((transition) => transition.type === "default");
+
+          nameInput.addEventListener("input", () => {
+            machine.states[stateIndex].name = nameInput.value;
+            syncFromUI();
+          });
+
+          isFinalInput.addEventListener("change", () => {
+            machine.states[stateIndex].isFinal = isFinalInput.checked;
+            syncFromUI();
+          });
+
+          removeStateButton.addEventListener("click", () => {
+            machine.states.splice(stateIndex, 1);
+            if (!machine.states.length) {
+              machine.states.push(createEmptyState(""));
+            }
+            syncFromUI();
+          });
+
+          addRegexButton.addEventListener("click", () => {
+            machine.states[stateIndex].transitions.push(createTransition("regex", "", ""));
+            syncFromUI();
+          });
+
+          addDefaultButton.addEventListener("click", () => {
+            if (machine.states[stateIndex].transitions.some((transition) => transition.type === "default")) {
+              errorsBox.textContent = "Only one default transition is allowed per state.";
+              return;
+            }
+            machine.states[stateIndex].transitions.push(createTransition("default", "", ""));
+            syncFromUI();
+          });
+
+          state.transitions.forEach((transition, transitionIndex) => {
+            const row = transitionTemplate.content.firstElementChild.cloneNode(true);
+            const typeSelect = row.querySelector('[data-field="type"]');
+            const regexInput = row.querySelector('[data-field="regex"]');
+            const targetInput = row.querySelector('[data-field="target"]');
+            const removeTransitionButton = row.querySelector('[data-action="removeTransition"]');
+
+            typeSelect.value = transition.type;
+            regexInput.value = transition.regex;
+            targetInput.value = transition.target;
+
+            function refreshRowMode() {
+              const isDefault = typeSelect.value === "default";
+              row.classList.toggle("default", isDefault);
+              regexInput.disabled = isDefault;
+            }
+
+            refreshRowMode();
+
+            typeSelect.addEventListener("change", () => {
+              if (
+                typeSelect.value === "default" &&
+                machine.states[stateIndex].transitions.some(
+                  (t, idx) => t.type === "default" && idx !== transitionIndex
+                )
+              ) {
+                typeSelect.value = "regex";
+                errorsBox.textContent = "Only one default transition is allowed per state.";
+                return;
+              }
+              machine.states[stateIndex].transitions[transitionIndex].type = typeSelect.value;
+              if (typeSelect.value === "default") {
+                machine.states[stateIndex].transitions[transitionIndex].regex = "";
+              }
+              syncFromUI();
+            });
+
+            regexInput.addEventListener("input", () => {
+              machine.states[stateIndex].transitions[transitionIndex].regex = regexInput.value;
+              syncFromUI();
+            });
+
+            targetInput.addEventListener("input", () => {
+              machine.states[stateIndex].transitions[transitionIndex].target = targetInput.value;
+              syncFromUI();
+            });
+
+            removeTransitionButton.addEventListener("click", () => {
+              machine.states[stateIndex].transitions.splice(transitionIndex, 1);
+              syncFromUI();
+            });
+
+            transitionsRoot.appendChild(row);
+          });
+
+          statesRoot.appendChild(card);
+        });
+      }
+
+      function syncFromUI() {
+        syncingFromUI = true;
+        dslInput.value = buildDsl(machine);
+        syncingFromUI = false;
+        writeDslToUrl(dslInput.value);
+        errorsBox.textContent = "";
+        renderUIFromMachine();
+        output.textContent = summarize(machine);
+        renderGraph(machine);
+      }
+
+      function syncFromDsl() {
+        if (syncingFromUI) {
+          return;
+        }
+
+        const parsed = parseDsl(dslInput.value);
+        machine = parsed.machine;
+
+        if (!machine.states.length) {
+          machine.states.push(createEmptyState(""));
+        }
+
+        writeDslToUrl(dslInput.value);
+        errorsBox.textContent = parsed.errors.join("\n");
+        renderUIFromMachine();
+        output.textContent = summarize(machine);
+        renderGraph(machine);
+      }
+
+      addStateButton.addEventListener("click", () => {
+        machine.states.push(createEmptyState(""));
+        syncFromUI();
+      });
+
+      loadFsmButton.addEventListener("click", () => {
+        loadFsmFileInput.click();
+      });
+
+      exportFsmButton.addEventListener("click", () => {
+        exportFsmFile();
+      });
+
+      exportPngButton.addEventListener("click", async () => {
+        await exportGraphAsPng();
+      });
+
+      loadFsmFileInput.addEventListener("change", async () => {
+        const file = loadFsmFileInput.files && loadFsmFileInput.files[0];
+        if (!file) {
+          return;
+        }
+        try {
+          const text = await file.text();
+          dslInput.value = text;
+          syncFromDsl();
+        } catch (_error) {
+          errorsBox.textContent = "Could not read the selected .fsm file.";
+        } finally {
+          loadFsmFileInput.value = "";
+        }
+      });
+
+      dslInput.addEventListener("input", syncFromDsl);
+      window.addEventListener("hashchange", () => {
+        const dslFromUrl = readDslFromUrl();
+        if (dslFromUrl === null || dslFromUrl === dslInput.value) {
+          return;
+        }
+        dslInput.value = dslFromUrl;
+        syncFromDsl();
+      });
+
+      const initialDsl = [
+        "Idle",
+        "^click$ -> Active",
+        "[0-9]+ -> Counting",
+        "->Error",
+        "(Active)",
+        "^timeout$ -> Idle",
+      ].join("\n");
+
+      dslInput.value = readDslFromUrl() ?? initialDsl;
+
+      syncFromDsl();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+windogs.win, www.windogs.win {
+  root * /usr/share/caddy
+  try_files {path} /index.html
+  file_server
+}
+
+https://localhost, https://127.0.0.1 {
+  tls internal
+
+  root * /usr/share/caddy
+  try_files {path} /index.html
+  file_server
+}
