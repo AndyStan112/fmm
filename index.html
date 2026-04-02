@@ -200,6 +200,13 @@
         width: auto;
       }
 
+      .state-toggles {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
       .badge {
         border: 1px solid var(--accent);
         color: var(--accent);
@@ -232,6 +239,18 @@
         gap: 8px;
         margin-top: 8px;
         flex-wrap: wrap;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+
+      .panel-head h2 {
+        margin: 0;
       }
 
       button {
@@ -296,6 +315,34 @@
         display: block;
       }
 
+      .graph-menu {
+        position: fixed;
+        z-index: 30;
+        min-width: 120px;
+        padding: 6px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fffdf8;
+        box-shadow: 0 10px 30px rgba(15, 15, 15, 0.12);
+      }
+
+      .graph-menu[hidden] {
+        display: none;
+      }
+
+      .graph-menu button {
+        width: 100%;
+        text-align: left;
+        border: 0;
+        background: transparent;
+        padding: 8px 10px;
+      }
+
+      .graph-menu button:hover {
+        border-color: transparent;
+        background: var(--accent-soft);
+      }
+
       .viz pre {
         margin: 0;
         font-family: "IBM Plex Mono", "Consolas", monospace;
@@ -345,10 +392,18 @@
 
       <div class="grid">
         <section class="panel">
-          <h2>Language Input</h2>
+          <div class="panel-head">
+            <h2>Language Input</h2>
+            <label class="final-toggle">
+              <input id="showMetadataToggle" type="checkbox" />
+              Show Metadata
+            </label>
+          </div>
           <p class="hint">
             First line is initial state. Other lines are either state names or transitions
-            (`regex -> new_state` or `->default_state`). Wrap a state in `()` to mark final.
+            (`regex -> new_state` or `->default_state`). Wrap a state in `()` to mark final and
+            prefix it with `~` to hide it from the graph. Node positions are saved in a hidden
+            `.metadata` section.
           </p>
           <textarea id="dslInput" spellcheck="false"></textarea>
           <div id="errors" class="errors"></div>
@@ -376,10 +431,16 @@
       <article class="state-card">
         <div class="state-head">
           <input data-field="stateName" type="text" placeholder="State name" />
-          <label class="final-toggle">
-            <input data-field="isFinal" type="checkbox" />
-            Final
-          </label>
+          <div class="state-toggles">
+            <label class="final-toggle">
+              <input data-field="isFinal" type="checkbox" />
+              Final
+            </label>
+            <label class="final-toggle">
+              <input data-field="isHidden" type="checkbox" />
+              Hidden
+            </label>
+          </div>
           <span data-field="initialBadge" class="badge">Initial</span>
           <button data-action="removeState" type="button" class="danger">Remove</button>
         </div>
@@ -408,12 +469,17 @@
       </div>
     </template>
 
+    <div id="graphMenu" class="graph-menu" hidden>
+      <button id="graphMenuHide" type="button">Hide</button>
+    </div>
+
     <script>
       const dslInput = document.getElementById("dslInput");
       const appRoot = document.getElementById("appRoot");
       const statesRoot = document.getElementById("states");
       const errorsBox = document.getElementById("errors");
       const graph = document.getElementById("graph");
+      const showMetadataToggle = document.getElementById("showMetadataToggle");
       const toggleEditorsButton = document.getElementById("toggleEditors");
       const toggleEditorsIconPath = document.getElementById("toggleEditorsIconPath");
       const addStateButton = document.getElementById("addState");
@@ -421,20 +487,25 @@
       const loadFsmFileInput = document.getElementById("loadFsmFile");
       const exportFsmButton = document.getElementById("exportFsm");
       const exportPngButton = document.getElementById("exportPng");
+      const graphMenu = document.getElementById("graphMenu");
+      const graphMenuHideButton = document.getElementById("graphMenuHide");
       const stateTemplate = document.getElementById("stateTemplate");
       const transitionTemplate = document.getElementById("transitionTemplate");
       const URL_FSM64_PREFIX = "#fsm64=";
       const URL_FSM_LEGACY_PREFIX = "#fsm=";
 
       let machine = {
-        states: [{ name: "Idle", isFinal: false, transitions: [] }],
+        states: [{ name: "Idle", isFinal: false, isHidden: false, transitions: [] }],
       };
 
       let syncingFromUI = false;
       let editorsHidden = false;
+      let metadataVisible = false;
+      let graphLayout = {};
+      let graphMenuStateName = "";
 
-      function createEmptyState(name = "", isFinal = false) {
-        return { name, isFinal, transitions: [] };
+      function createEmptyState(name = "", isFinal = false, isHidden = false) {
+        return { name, isFinal, isHidden, transitions: [] };
       }
 
       function createTransition(type = "regex", regex = "", target = "") {
@@ -502,13 +573,64 @@
         URL.revokeObjectURL(url);
       }
 
+      function sanitizeGraphLayout(model, layout) {
+        const nextLayout = {};
+        const validNames = new Set(
+          model.states.map((state) => state.name.trim()).filter((name) => name.length > 0)
+        );
+        validNames.forEach((name) => {
+          const position = layout[name];
+          if (!position) {
+            return;
+          }
+          const x = Number(position.x);
+          const y = Number(position.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return;
+          }
+          nextLayout[name] = { x, y };
+        });
+        return nextLayout;
+      }
+
+      function buildMetadataSection(layout) {
+        const names = Object.keys(layout).sort((a, b) => a.localeCompare(b));
+        if (!names.length) {
+          return "";
+        }
+        const positions = {};
+        names.forEach((name) => {
+          positions[name] = {
+            x: Math.round(layout[name].x * 100) / 100,
+            y: Math.round(layout[name].y * 100) / 100,
+          };
+        });
+        return [".metadata", JSON.stringify({ positions }, null, 2)].join("\n");
+      }
+
+      function splitDslSections(text) {
+        const marker = "\n.metadata";
+        const normalized = text.replace(/\r\n/g, "\n");
+        if (normalized === ".metadata" || normalized.startsWith(".metadata\n")) {
+          return { machineText: "", metadataText: normalized };
+        }
+        const markerIndex = normalized.indexOf(marker);
+        if (markerIndex === -1) {
+          return { machineText: normalized, metadataText: "" };
+        }
+        return {
+          machineText: normalized.slice(0, markerIndex),
+          metadataText: normalized.slice(markerIndex + 1),
+        };
+      }
+
       function autoResizeDslInput() {
         dslInput.style.height = "auto";
         dslInput.style.height = `${Math.max(230, dslInput.scrollHeight)}px`;
       }
 
       function exportFsmFile() {
-        const dsl = dslInput.value || buildDsl(machine);
+        const dsl = buildDsl(machine, { includeMetadata: true });
         const blob = new Blob([dsl], { type: "text/plain;charset=utf-8" });
         downloadBlob("machine.fsm", blob);
       }
@@ -570,21 +692,28 @@
       }
 
       function parseStateLine(line) {
-        const trimmed = line.trim();
+        let trimmed = line.trim();
+        let isHidden = false;
+        if (trimmed.startsWith("~")) {
+          isHidden = true;
+          trimmed = trimmed.slice(1).trim();
+        }
         const finalMatch = trimmed.match(/^\((.*)\)$/);
         if (finalMatch) {
-          return { name: finalMatch[1].trim(), isFinal: true };
+          return { name: finalMatch[1].trim(), isFinal: true, isHidden };
         }
-        return { name: trimmed, isFinal: false };
+        return { name: trimmed, isFinal: false, isHidden };
       }
 
       function formatStateLine(state) {
         const name = state.name.trim();
-        return state.isFinal ? `(${name})` : name;
+        const base = state.isFinal ? `(${name})` : name;
+        return state.isHidden ? `~${base}` : base;
       }
 
       function parseDsl(text) {
-        const lines = text
+        const { machineText, metadataText } = splitDslSections(text);
+        const lines = machineText
           .split("\n")
           .map((line) => line.trim())
           .filter((line) => line.length > 0);
@@ -593,13 +722,17 @@
         if (!lines.length) {
           return {
             machine: { states: [createEmptyState("")] },
+            metadata: {},
+            hasMetadata: Boolean(metadataText.trim()),
             errors: ["Line 1 must be the initial state name."],
           };
         }
 
         const initialState = parseStateLine(lines[0]);
         const parsed = {
-          states: [createEmptyState(initialState.name, initialState.isFinal)],
+          states: [
+            createEmptyState(initialState.name, initialState.isFinal, initialState.isHidden),
+          ],
         };
 
         let currentState = parsed.states[0];
@@ -611,7 +744,11 @@
 
           if (!line.includes("->")) {
             const parsedState = parseStateLine(line);
-            currentState = createEmptyState(parsedState.name, parsedState.isFinal);
+            currentState = createEmptyState(
+              parsedState.name,
+              parsedState.isFinal,
+              parsedState.isHidden
+            );
             parsed.states.push(currentState);
             hasDefaultInCurrentState = false;
             continue;
@@ -641,10 +778,32 @@
           currentState.transitions.push(createTransition("regex", left, right));
         }
 
-        return { machine: parsed, errors };
+        let metadata = {};
+        const trimmedMetadata = metadataText.trim();
+        if (trimmedMetadata) {
+          const jsonText = trimmedMetadata.replace(/^\.metadata\s*/, "").trim();
+          if (jsonText) {
+            try {
+              const parsedMetadata = JSON.parse(jsonText);
+              metadata = parsedMetadata?.positions && typeof parsedMetadata.positions === "object"
+                ? parsedMetadata.positions
+                : {};
+            } catch (_error) {
+              errors.push("Metadata section is not valid JSON. Ignoring saved positions.");
+            }
+          }
+        }
+
+        return {
+          machine: parsed,
+          metadata: sanitizeGraphLayout(parsed, metadata),
+          hasMetadata: Boolean(trimmedMetadata),
+          errors,
+        };
       }
 
-      function buildDsl(model) {
+      function buildDsl(model, options = {}) {
+        const { includeMetadata = false } = options;
         if (!model.states.length) {
           return "";
         }
@@ -668,7 +827,30 @@
           });
         });
 
-        return lines.join("\n");
+        const machineDsl = lines.join("\n");
+        if (!includeMetadata) {
+          return machineDsl;
+        }
+
+        const metadataSection = buildMetadataSection(sanitizeGraphLayout(model, graphLayout));
+        return metadataSection ? `${machineDsl}\n\n${metadataSection}` : machineDsl;
+      }
+
+      function refreshDslInput() {
+        const nextValue = buildDsl(machine, { includeMetadata: metadataVisible });
+        if (dslInput.value !== nextValue) {
+          dslInput.value = nextValue;
+        }
+        autoResizeDslInput();
+      }
+
+      function syncPersistedDsl() {
+        writeDslToUrl(buildDsl(machine, { includeMetadata: true }));
+        if (metadataVisible) {
+          syncingFromUI = true;
+          refreshDslInput();
+          syncingFromUI = false;
+        }
       }
 
       function summarize(model) {
@@ -681,7 +863,11 @@
 
         model.states.forEach((state, index) => {
           const name = state.name.trim() || "(unnamed state)";
-          lines.push(`${index === 0 ? "*" : "-"} ${name}${state.isFinal ? " [final]" : ""}`);
+          lines.push(
+            `${index === 0 ? "*" : "-"} ${name}${state.isFinal ? " [final]" : ""}${
+              state.isHidden ? " [hidden]" : ""
+            }`
+          );
 
           const transitions = state.transitions;
           if (!transitions.length) {
@@ -736,9 +922,35 @@
         label.textContent = text;
         group.appendChild(label);
         layer.appendChild(group);
+        return group;
+      }
+
+      function clientPointToSvg(svg, clientX, clientY) {
+        const point = svg.createSVGPoint();
+        point.x = clientX;
+        point.y = clientY;
+        const ctm = svg.getScreenCTM();
+        if (!ctm) {
+          return { x: 0, y: 0 };
+        }
+        return point.matrixTransform(ctm.inverse());
+      }
+
+      function hideGraphMenu() {
+        graphMenu.hidden = true;
+        graphMenuStateName = "";
+      }
+
+      function showGraphMenu(clientX, clientY, stateName) {
+        graphMenuStateName = stateName;
+        graphMenuHideButton.textContent = "Hide";
+        graphMenu.style.left = `${clientX}px`;
+        graphMenu.style.top = `${clientY}px`;
+        graphMenu.hidden = false;
       }
 
       function renderGraph(model) {
+        hideGraphMenu();
         graph.innerHTML = "";
 
         const nodeNames = [];
@@ -753,6 +965,7 @@
           if (stateName) {
             nodeMeta[stateName] = {
               isFinal: Boolean(nodeMeta[stateName]?.isFinal || state.isFinal),
+              isHidden: Boolean(nodeMeta[stateName]?.isHidden || state.isHidden),
             };
           }
           state.transitions.forEach((transition) => {
@@ -769,8 +982,14 @@
           return;
         }
 
+        const visibleNodeNames = nodeNames.filter((name) => !nodeMeta[name]?.isHidden);
+        if (!visibleNodeNames.length) {
+          graph.textContent = "All nodes are hidden. Unhide one from the editor or DSL to show it.";
+          return;
+        }
+
         const nodeRadius = 26;
-        const count = nodeNames.length;
+        const count = visibleNodeNames.length;
         const width = Math.max(920, Math.ceil(Math.sqrt(count)) * 240);
         const height = Math.max(700, Math.ceil(Math.sqrt(count)) * 200);
         const centerX = width / 2;
@@ -802,12 +1021,12 @@
         const edges = [];
         model.states.forEach((state) => {
           const sourceName = state.name.trim();
-          if (!sourceName || !nodeSet.has(sourceName)) {
+          if (!sourceName || !nodeSet.has(sourceName) || nodeMeta[sourceName]?.isHidden) {
             return;
           }
           getOrderedTransitions(state).forEach((transition) => {
             const targetName = transition.target.trim();
-            if (!targetName || !nodeSet.has(targetName)) {
+            if (!targetName || !nodeSet.has(targetName) || nodeMeta[targetName]?.isHidden) {
               return;
             }
             const labelText = transition.type === "default" ? "default" : transition.regex || "?";
@@ -816,17 +1035,27 @@
         });
 
         const positions = {};
+        const fixedNodes = new Set();
         const margin = nodeRadius + 36;
         const cols = Math.max(2, Math.ceil(Math.sqrt(count)));
         const rows = Math.max(2, Math.ceil(count / cols));
         const cellW = (width - margin * 2) / Math.max(1, cols - 1);
         const cellH = (height - margin * 2) / Math.max(1, rows - 1);
 
-        nodeNames.forEach((name, index) => {
+        visibleNodeNames.forEach((name, index) => {
           const col = index % cols;
           const row = Math.floor(index / cols);
           const jitterX = ((index * 17) % 9) - 4;
           const jitterY = ((index * 23) % 9) - 4;
+          const savedPosition = graphLayout[name];
+          if (savedPosition) {
+            positions[name] = {
+              x: Math.max(margin, Math.min(width - margin, savedPosition.x)),
+              y: Math.max(margin, Math.min(height - margin, savedPosition.y)),
+            };
+            fixedNodes.add(name);
+            return;
+          }
           positions[name] = {
             x: margin + col * cellW + jitterX,
             y: margin + row * cellH + jitterY,
@@ -839,21 +1068,21 @@
         const gravityK = 0.0035;
         const damping = 0.87;
         const velocity = {};
-        nodeNames.forEach((name) => {
+        visibleNodeNames.forEach((name) => {
           velocity[name] = { x: 0, y: 0 };
         });
 
         for (let iter = 0; iter < 260; iter += 1) {
           const force = {};
-          nodeNames.forEach((name) => {
+          visibleNodeNames.forEach((name) => {
             force[name] = { x: 0, y: 0 };
           });
 
-          for (let i = 0; i < nodeNames.length; i += 1) {
-            const aName = nodeNames[i];
+          for (let i = 0; i < visibleNodeNames.length; i += 1) {
+            const aName = visibleNodeNames[i];
             const a = positions[aName];
-            for (let j = i + 1; j < nodeNames.length; j += 1) {
-              const bName = nodeNames[j];
+            for (let j = i + 1; j < visibleNodeNames.length; j += 1) {
+              const bName = visibleNodeNames[j];
               const b = positions[bName];
               let dx = b.x - a.x;
               let dy = b.y - a.y;
@@ -889,10 +1118,16 @@
             force[edge.targetName].y -= fy;
           });
 
-          nodeNames.forEach((name) => {
+          visibleNodeNames.forEach((name) => {
             const p = positions[name];
             force[name].x += (centerX - p.x) * gravityK;
             force[name].y += (centerY - p.y) * gravityK;
+
+            if (fixedNodes.has(name)) {
+              velocity[name].x = 0;
+              velocity[name].y = 0;
+              return;
+            }
 
             velocity[name].x = (velocity[name].x + force[name].x) * damping;
             velocity[name].y = (velocity[name].y + force[name].y) * damping;
@@ -903,6 +1138,15 @@
             p.y = Math.max(margin, Math.min(height - margin, p.y));
           });
         }
+
+        const nextGraphLayout = {};
+        visibleNodeNames.forEach((name) => {
+          nextGraphLayout[name] = {
+            x: positions[name].x,
+            y: positions[name].y,
+          };
+        });
+        graphLayout = nextGraphLayout;
 
         const pairGroups = new Map();
         edges.forEach((edge, index) => {
@@ -951,15 +1195,76 @@
           });
         });
 
-        edges.forEach((edge, edgeIndex) => {
-          const sourceName = edge.sourceName;
-          const targetName = edge.targetName;
-          const source = positions[sourceName];
-          const target = positions[targetName];
-          const labelText = edge.labelText;
+        const edgeViews = edges.map((edge) => {
+          const curve = createSvgNode("path");
+          curve.setAttribute("fill", "none");
+          curve.setAttribute("stroke", "#58534f");
+          curve.setAttribute("stroke-width", "1.7");
+          curve.setAttribute("marker-end", "url(#arrow)");
+          edgeLayer.appendChild(curve);
 
-          if (sourceName === targetName) {
-              const loop = createSvgNode("path");
+          const labelGroup = appendEdgeLabel(labelLayer, 0, 0, edge.labelText);
+          return { edge, curve, labelGroup };
+        });
+
+        const nodeViews = [];
+        visibleNodeNames.forEach((name, index) => {
+          const group = createSvgNode("g");
+          group.style.cursor = "grab";
+
+          const circle = createSvgNode("circle");
+          const isInitial = index === 0;
+          const isEven = index % 2 === 0;
+          const fillColor = isInitial ? "#dbe9ff" : isEven ? "#fff4e4" : "#eaf3ff";
+          const strokeColor = isInitial ? "#2058c4" : isEven ? "#cc8a22" : "#2d67c8";
+          circle.setAttribute("r", String(nodeRadius));
+          circle.setAttribute("fill", fillColor);
+          circle.setAttribute("stroke", strokeColor);
+          circle.setAttribute("stroke-width", "1.8");
+          group.appendChild(circle);
+
+          let inner = null;
+          if (nodeMeta[name]?.isFinal) {
+            inner = createSvgNode("circle");
+            inner.setAttribute("r", String(nodeRadius - 5));
+            inner.setAttribute("fill", "none");
+            inner.setAttribute("stroke", strokeColor);
+            inner.setAttribute("stroke-width", "1.3");
+            group.appendChild(inner);
+          }
+
+          const label = createSvgNode("text");
+          label.setAttribute("text-anchor", "middle");
+          label.setAttribute("font-size", "11");
+          label.setAttribute("fill", "#1b2b54");
+          label.setAttribute("y", "4");
+          label.style.pointerEvents = "none";
+          label.textContent = name;
+          group.appendChild(label);
+
+          nodeLayer.appendChild(group);
+          nodeViews.push({ name, group, circle, inner, label });
+        });
+
+        function setLabelPosition(labelGroup, x, y) {
+          const rect = labelGroup.querySelector("rect");
+          const label = labelGroup.querySelector("text");
+          const width = Number(rect.getAttribute("width"));
+          const height = Number(rect.getAttribute("height"));
+          rect.setAttribute("x", String(x - width / 2));
+          rect.setAttribute("y", String(y - height / 2));
+          label.setAttribute("x", String(x));
+          label.setAttribute("y", String(y));
+        }
+
+        function redrawGraph() {
+          edgeViews.forEach(({ edge, curve, labelGroup }, edgeIndex) => {
+            const sourceName = edge.sourceName;
+            const targetName = edge.targetName;
+            const source = positions[sourceName];
+            const target = positions[targetName];
+
+            if (sourceName === targetName) {
               const startX = source.x + nodeRadius * 0.6;
               const startY = source.y - nodeRadius * 0.8;
               const ctrl1X = source.x + nodeRadius * 1.8;
@@ -968,86 +1273,112 @@
               const ctrl2Y = source.y - nodeRadius * 2.2;
               const endX = source.x - nodeRadius * 0.6;
               const endY = source.y - nodeRadius * 0.8;
-              loop.setAttribute(
+              curve.setAttribute(
                 "d",
                 `M ${startX} ${startY} C ${ctrl1X} ${ctrl1Y}, ${ctrl2X} ${ctrl2Y}, ${endX} ${endY}`
               );
-              loop.setAttribute("fill", "none");
-              loop.setAttribute("stroke", "#58534f");
-              loop.setAttribute("stroke-width", "1.7");
-              loop.setAttribute("marker-end", "url(#arrow)");
-              edgeLayer.appendChild(loop);
-
-              appendEdgeLabel(labelLayer, source.x, source.y - nodeRadius * 2.45, labelText);
+              setLabelPosition(labelGroup, source.x, source.y - nodeRadius * 2.7);
               return;
-          }
+            }
 
-          const dx = target.x - source.x;
-          const dy = target.y - source.y;
-          const distance = Math.hypot(dx, dy) || 1;
-          const ux = dx / distance;
-          const uy = dy / distance;
-          const nx = -uy;
-          const ny = ux;
-          const startX = source.x + ux * nodeRadius;
-          const startY = source.y + uy * nodeRadius;
-          const endX = target.x - ux * nodeRadius;
-          const endY = target.y - uy * nodeRadius;
-          const offset = directionOffsets.get(edgeIndex) || 0;
-          const controlX = (startX + endX) / 2 + nx * offset;
-          const controlY = (startY + endY) / 2 + ny * offset;
+            const dx = target.x - source.x;
+            const dy = target.y - source.y;
+            const distance = Math.hypot(dx, dy) || 1;
+            const ux = dx / distance;
+            const uy = dy / distance;
+            const nx = -uy;
+            const ny = ux;
+            const startX = source.x + ux * nodeRadius;
+            const startY = source.y + uy * nodeRadius;
+            const endX = target.x - ux * nodeRadius;
+            const endY = target.y - uy * nodeRadius;
+            const offset = directionOffsets.get(edgeIndex) || 0;
+            const controlX = (startX + endX) / 2 + nx * offset;
+            const controlY = (startY + endY) / 2 + ny * offset;
+            curve.setAttribute(
+              "d",
+              `M ${startX} ${startY} Q ${controlX} ${controlY} ${endX} ${endY}`
+            );
 
-          const curve = createSvgNode("path");
-          curve.setAttribute(
-            "d",
-            `M ${startX} ${startY} Q ${controlX} ${controlY} ${endX} ${endY}`
-          );
-          curve.setAttribute("fill", "none");
-          curve.setAttribute("stroke", "#58534f");
-          curve.setAttribute("stroke-width", "1.7");
-          curve.setAttribute("marker-end", "url(#arrow)");
-          edgeLayer.appendChild(curve);
+            const labelX = 0.25 * startX + 0.5 * controlX + 0.25 * endX;
+            const labelY = 0.25 * startY + 0.5 * controlY + 0.25 * endY - 16;
+            setLabelPosition(labelGroup, labelX, labelY);
+          });
 
-          const labelX = 0.25 * startX + 0.5 * controlX + 0.25 * endX;
-          const labelY = 0.25 * startY + 0.5 * controlY + 0.25 * endY - 4;
-          appendEdgeLabel(labelLayer, labelX, labelY, labelText);
+          nodeViews.forEach(({ name, group }) => {
+            const position = positions[name];
+            group.setAttribute("transform", `translate(${position.x} ${position.y})`);
+          });
+        }
+
+        let activeDrag = null;
+        nodeViews.forEach(({ name, group }) => {
+          group.addEventListener("contextmenu", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            showGraphMenu(event.clientX, event.clientY, name);
+          });
+
+          group.addEventListener("pointerdown", (event) => {
+            if (event.button !== 0) {
+              return;
+            }
+            event.preventDefault();
+            hideGraphMenu();
+            const point = clientPointToSvg(svg, event.clientX, event.clientY);
+            const position = positions[name];
+            activeDrag = {
+              name,
+              pointerId: event.pointerId,
+              offsetX: point.x - position.x,
+              offsetY: point.y - position.y,
+            };
+            fixedNodes.add(name);
+            group.style.cursor = "grabbing";
+            group.setPointerCapture(event.pointerId);
+          });
+
+          group.addEventListener("pointermove", (event) => {
+            if (!activeDrag || activeDrag.name !== name || activeDrag.pointerId !== event.pointerId) {
+              return;
+            }
+            const point = clientPointToSvg(svg, event.clientX, event.clientY);
+            positions[name].x = Math.max(
+              margin,
+              Math.min(width - margin, point.x - activeDrag.offsetX)
+            );
+            positions[name].y = Math.max(
+              margin,
+              Math.min(height - margin, point.y - activeDrag.offsetY)
+            );
+            graphLayout[name] = {
+              x: positions[name].x,
+              y: positions[name].y,
+            };
+            redrawGraph();
+          });
+
+          const finishDrag = (event) => {
+            if (!activeDrag || activeDrag.name !== name || activeDrag.pointerId !== event.pointerId) {
+              return;
+            }
+            activeDrag = null;
+            group.style.cursor = "grab";
+            if (group.hasPointerCapture(event.pointerId)) {
+              group.releasePointerCapture(event.pointerId);
+            }
+            syncPersistedDsl();
+          };
+
+          group.addEventListener("pointerup", finishDrag);
+          group.addEventListener("pointercancel", finishDrag);
         });
 
-        nodeNames.forEach((name, index) => {
-          const position = positions[name];
-          const circle = createSvgNode("circle");
-          const isInitial = index === 0;
-          const isEven = index % 2 === 0;
-          const fillColor = isInitial ? "#dbe9ff" : isEven ? "#fff4e4" : "#eaf3ff";
-          const strokeColor = isInitial ? "#2058c4" : isEven ? "#cc8a22" : "#2d67c8";
-          circle.setAttribute("cx", String(position.x));
-          circle.setAttribute("cy", String(position.y));
-          circle.setAttribute("r", String(nodeRadius));
-          circle.setAttribute("fill", fillColor);
-          circle.setAttribute("stroke", strokeColor);
-          circle.setAttribute("stroke-width", "1.8");
-          nodeLayer.appendChild(circle);
-
-          if (nodeMeta[name]?.isFinal) {
-            const inner = createSvgNode("circle");
-            inner.setAttribute("cx", String(position.x));
-            inner.setAttribute("cy", String(position.y));
-            inner.setAttribute("r", String(nodeRadius - 5));
-            inner.setAttribute("fill", "none");
-            inner.setAttribute("stroke", strokeColor);
-            inner.setAttribute("stroke-width", "1.3");
-            nodeLayer.appendChild(inner);
-          }
-
-          const label = createSvgNode("text");
-          label.setAttribute("x", String(position.x));
-          label.setAttribute("y", String(position.y + 4));
-          label.setAttribute("text-anchor", "middle");
-          label.setAttribute("font-size", "11");
-          label.setAttribute("fill", "#1b2b54");
-          label.textContent = name;
-          nodeLayer.appendChild(label);
+        svg.addEventListener("pointerdown", () => {
+          hideGraphMenu();
         });
+
+        redrawGraph();
 
         svg.appendChild(edgeLayer);
         svg.appendChild(labelLayer);
@@ -1062,6 +1393,7 @@
           const card = stateTemplate.content.firstElementChild.cloneNode(true);
           const nameInput = card.querySelector('[data-field="stateName"]');
           const isFinalInput = card.querySelector('[data-field="isFinal"]');
+          const isHiddenInput = card.querySelector('[data-field="isHidden"]');
           const initialBadge = card.querySelector('[data-field="initialBadge"]');
           const removeStateButton = card.querySelector('[data-action="removeState"]');
           const transitionsRoot = card.querySelector('[data-field="transitions"]');
@@ -1070,6 +1402,7 @@
 
           nameInput.value = state.name;
           isFinalInput.checked = Boolean(state.isFinal);
+          isHiddenInput.checked = Boolean(state.isHidden);
           initialBadge.style.display = stateIndex === 0 ? "inline-block" : "none";
           removeStateButton.style.display = stateIndex === 0 ? "none" : "inline-block";
           addDefaultButton.disabled = state.transitions.some((transition) => transition.type === "default");
@@ -1081,6 +1414,11 @@
 
           isFinalInput.addEventListener("change", () => {
             machine.states[stateIndex].isFinal = isFinalInput.checked;
+            syncFromUI();
+          });
+
+          isHiddenInput.addEventListener("change", () => {
+            machine.states[stateIndex].isHidden = isHiddenInput.checked;
             syncFromUI();
           });
 
@@ -1269,16 +1607,15 @@
 
       function syncFromUI(options = {}) {
         const { rerenderUI = true } = options;
-        syncingFromUI = true;
-        dslInput.value = buildDsl(machine);
-        syncingFromUI = false;
-        autoResizeDslInput();
-        writeDslToUrl(dslInput.value);
         errorsBox.textContent = "";
         if (rerenderUI) {
           renderUIFromMachine();
         }
         renderGraph(machine);
+        syncingFromUI = true;
+        refreshDslInput();
+        syncingFromUI = false;
+        syncPersistedDsl();
         requestAnimationFrame(applyMasonryLayout);
       }
 
@@ -1289,16 +1626,21 @@
 
         const parsed = parseDsl(dslInput.value);
         machine = parsed.machine;
+        graphLayout = parsed.hasMetadata
+          ? parsed.metadata
+          : sanitizeGraphLayout(machine, graphLayout);
 
         if (!machine.states.length) {
           machine.states.push(createEmptyState(""));
         }
 
-        autoResizeDslInput();
-        writeDslToUrl(dslInput.value);
         errorsBox.textContent = parsed.errors.join("\n");
         renderUIFromMachine();
         renderGraph(machine);
+        syncingFromUI = true;
+        refreshDslInput();
+        syncingFromUI = false;
+        syncPersistedDsl();
         requestAnimationFrame(applyMasonryLayout);
       }
 
@@ -1336,6 +1678,37 @@
         await exportGraphAsPng();
       });
 
+      graphMenuHideButton.addEventListener("click", () => {
+        const targetState = machine.states.find(
+          (state) => state.name.trim() === graphMenuStateName
+        );
+        if (!targetState) {
+          hideGraphMenu();
+          return;
+        }
+        targetState.isHidden = true;
+        hideGraphMenu();
+        syncFromUI();
+      });
+
+      document.addEventListener("pointerdown", (event) => {
+        if (!graphMenu.hidden && !graphMenu.contains(event.target)) {
+          hideGraphMenu();
+        }
+      });
+
+      document.addEventListener("contextmenu", (event) => {
+        if (!graphMenu.hidden && !graphMenu.contains(event.target)) {
+          hideGraphMenu();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          hideGraphMenu();
+        }
+      });
+
       loadFsmFileInput.addEventListener("change", async () => {
         const file = loadFsmFileInput.files && loadFsmFileInput.files[0];
         if (!file) {
@@ -1353,8 +1726,13 @@
       });
 
       dslInput.addEventListener("input", () => {
-        autoResizeDslInput();
         syncFromDsl();
+      });
+      showMetadataToggle.addEventListener("change", () => {
+        metadataVisible = showMetadataToggle.checked;
+        syncingFromUI = true;
+        refreshDslInput();
+        syncingFromUI = false;
       });
       toggleEditorsButton.addEventListener("click", () => {
         setEditorsHidden(!editorsHidden);
@@ -1364,7 +1742,8 @@
       });
       window.addEventListener("hashchange", () => {
         const dslFromUrl = readDslFromUrl();
-        if (dslFromUrl === null || dslFromUrl === dslInput.value) {
+        const currentUrlDsl = buildDsl(machine, { includeMetadata: true });
+        if (dslFromUrl === null || dslFromUrl === currentUrlDsl) {
           return;
         }
         dslInput.value = dslFromUrl;
@@ -1381,7 +1760,7 @@
       ].join("\n");
 
       dslInput.value = readDslFromUrl() ?? initialDsl;
-      autoResizeDslInput();
+      showMetadataToggle.checked = metadataVisible;
 
       syncFromDsl();
     </script>
