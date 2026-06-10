@@ -4,10 +4,12 @@ windogs.win, www.windogs.win {
   file_server
 }
 
-https://localhost, https://127.0.0.1 {
-  tls internal
-
+fsm.windogs.win {
   root * /usr/share/caddy
   try_files {path} /index.html
   file_server
+}
+
+sera.windogs.win {
+  reverse_proxy sera:5000
 }

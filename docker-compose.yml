@@ -10,8 +10,14 @@ services:
       - ./:/usr/share/caddy:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks:
+      - web
     restart: unless-stopped
 
 volumes:
   caddy_data:
   caddy_config:
+
+networks:
+  web:
+    external: true
