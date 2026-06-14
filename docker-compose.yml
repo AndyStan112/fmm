@@ -1,22 +1,12 @@
 services:
   fmm:
-    image: caddy:2-alpine
+    build: .
     container_name: fmm-visualizer
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./:/usr/share/caddy:ro
-      - caddy_data:/data
-      - caddy_config:/config
+    expose:
+      - "80"
     networks:
       - web
     restart: unless-stopped
-
-volumes:
-  caddy_data:
-  caddy_config:
 
 networks:
   web:
